@@ -448,6 +448,15 @@ class TlsServer(ThreadingHTTPServer):
             return sock, addr
         return self.ctx.wrap_socket(sock, server_side=True, do_handshake_on_connect=False), addr
 
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        # Browsers abort the handshake while the user decides whether to trust
+        # the self-signed certificate, and idle keep-alive connections time
+        # out; neither deserves a traceback.
+        if isinstance(exc, (ssl.SSLError, ConnectionError, TimeoutError)):
+            return
+        log(f"error handling a request from {client_address[0]}: {exc!r}")
+
 
 def make_handler(app):
     class Handler(BaseHTTPRequestHandler):

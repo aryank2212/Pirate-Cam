@@ -9,12 +9,14 @@ import os
 import shutil
 import signal
 import socket
+import ssl
 import struct
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -110,13 +112,13 @@ class WsClient:
 
 
 class Server:
-    def __init__(self, *extra, device="null"):
+    def __init__(self, *extra, device="null", tls=False):
         self.port = free_port()
         # Never use an undrained PIPE here: a full pipe blocks the server's ffmpeg.
         self.log = tempfile.TemporaryFile()
         self.proc = subprocess.Popen(
-            [sys.executable, str(ROOT / "pirate_cam.py"), "--insecure-http", "--no-qr", "--port", str(self.port),
-             "--device", device, "--size", f"{W}x{H}", *extra],
+            [sys.executable, str(ROOT / "pirate_cam.py"), *([] if tls else ["--insecure-http"]), "--no-qr",
+             "--port", str(self.port), "--device", device, "--size", f"{W}x{H}", *extra],
             stdout=self.log, stderr=subprocess.STDOUT)
         end = time.time() + 15
         while time.time() < end:
@@ -199,6 +201,29 @@ class ServerTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_tls_serves_and_rejected_handshakes_are_quiet(self):
+        srv = Server("--cert-dir", str(self.tmp / "certs"), tls=True)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        try:
+            # Safari finishes the handshake, then drops the connection while the
+            # user decides whether to trust the self-signed certificate.
+            for _ in range(3):
+                tls = ctx.wrap_socket(socket.create_connection(("127.0.0.1", srv.port), timeout=5),
+                                      server_hostname="localhost")
+                tls.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                tls.close()
+            time.sleep(0.5)
+            with urllib.request.urlopen(f"https://127.0.0.1:{srv.port}/api/status", context=ctx, timeout=5) as r:
+                self.assertEqual(r.status, 200)
+                self.assertEqual(json.load(r)["width"], W)
+        finally:
+            srv.stop(keep_log=True)
+        log = srv.read_log()
+        self.assertNotIn("Traceback", log)
+        self.assertNotIn("error handling", log)
 
     def test_page_and_status(self):
         srv = Server()
