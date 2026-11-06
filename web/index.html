@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b0d10">
+<title>Pirate-Cam</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23111'/%3E%3Ccircle cx='12' cy='14' r='3' fill='%23fff'/%3E%3Ccircle cx='20' cy='14' r='3' fill='%23fff'/%3E%3Crect x='11' y='21' width='10' height='3' rx='1' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f3f4f6; --card: #ffffff; --fg: #14161a; --muted: #636b78; --line: #dde1e7;
+    --accent: #1d4ed8; --accent-fg: #ffffff; --ok: #15803d; --warn: #b45309; --bad: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0d10; --card: #14181d; --fg: #eef0f3; --muted: #98a1ae; --line: #262c34;
+      --accent: #5b8cff; --accent-fg: #0b0d10; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
+  main { max-width: 560px; margin: 0 auto; display: grid; gap: 12px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  h1 { margin: 0; font-size: 20px; letter-spacing: .2px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card); font-size: 14px; color: var(--muted);
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .pill[data-state="live"] { color: var(--ok); } .pill[data-state="live"] .dot { background: var(--ok); }
+  .pill[data-state="connecting"], .pill[data-state="reconnecting"] { color: var(--warn); }
+  .pill[data-state="connecting"] .dot, .pill[data-state="reconnecting"] .dot { background: var(--warn); }
+  .pill[data-state="error"] { color: var(--bad); } .pill[data-state="error"] .dot { background: var(--bad); }
+  .stage { position: relative; border-radius: 14px; overflow: hidden; background: #000; aspect-ratio: 16 / 9; }
+  .stage video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .stage.hidden video { visibility: hidden; }
+  .hud {
+    position: absolute; left: 8px; bottom: 8px; right: 8px; display: flex; flex-wrap: wrap; gap: 6px;
+    font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; color: #fff; pointer-events: none;
+  }
+  .hud span { background: rgba(0,0,0,.62); padding: 3px 6px; border-radius: 6px; }
+  .msg { min-height: 1.4em; color: var(--muted); font-size: 14px; }
+  .msg.bad { color: var(--bad); }
+  button, select, input[type="text"], input[type="password"], input[type="number"] {
+    font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; min-height: 44px; padding: 0 12px;
+  }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 650; width: 100%; min-height: 52px; font-size: 17px; }
+  button.primary[data-live="true"] { background: var(--bad); border-color: var(--bad); color: #fff; }
+  button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+  summary { cursor: pointer; padding: 14px 16px; font-weight: 600; list-style: none; min-height: 44px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; float: right; color: var(--muted); }
+  details[open] > summary::after { content: "\2212"; }
+  .body { display: grid; gap: 12px; padding: 0 16px 16px; }
+  .field { display: grid; gap: 6px; }
+  .field > label, .label { font-size: 13px; color: var(--muted); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 120px; }
+  .check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 16px; }
+  .check input { width: 22px; height: 22px; }
+  input[type="range"] { width: 100%; min-height: 32px; accent-color: var(--accent); }
+  .val { font-variant-numeric: tabular-nums; color: var(--fg); }
+  .note { font-size: 13px; color: var(--muted); margin: 0; }
+  [hidden] { display: none !important; }
+  #dim {
+    position: fixed; inset: 0; background: #000; color: #555; display: grid; place-items: center;
+    text-align: center; padding: 24px; z-index: 10; font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Pirate-Cam</h1>
+    <span class="pill" id="pill" data-state="idle" role="status"><span class="dot"></span><span id="pillText">Idle</span></span>
+  </header>
+
+  <div class="stage" id="stage">
+    <video id="preview" autoplay playsinline muted></video>
+    <div class="hud" id="hud" aria-live="off"></div>
+  </div>
+  <div class="msg" id="msg" role="alert"></div>
+
+  <button class="primary" id="go" data-live="false">Start streaming</button>
+
+  <details open>
+    <summary>Camera</summary>
+    <div class="body">
+      <div class="field"><label for="camera">Camera</label>
+        <div class="row">
+          <select id="camera"></select>
+          <button id="swap" type="button">Front / back</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="res">Resolution</label>
+          <select id="res">
+            <option value="640x360">640 x 360</option>
+            <option value="960x540">960 x 540</option>
+            <option value="1280x720">1280 x 720</option>
+            <option value="1920x1080">1920 x 1080</option>
+          </select></div>
+        <div class="field"><label for="fps">Frame rate</label>
+          <select id="fps">
+            <option value="15">15 fps</option><option value="24">24 fps</option>
+            <option value="30">30 fps</option><option value="60">60 fps</option>
+          </select></div>
+      </div>
+      <div class="field"><label for="quality">JPEG quality <span class="val" id="qualityVal"></span></label>
+        <input type="range" id="quality" min="30" max="95" step="5"></div>
+      <label class="check"><input type="checkbox" id="adaptive"> Lower quality automatically when the link is slow</label>
+      <div class="field" id="zoomField" hidden><label for="zoom">Zoom <span class="val" id="zoomVal"></span></label>
+        <input type="range" id="zoom"></div>
+      <label class="check" id="torchField" hidden><input type="checkbox" id="torch"> Flashlight</label>
+      <p class="note" id="capNote"></p>
+    </div>
+  </details>
+
+  <details>
+    <summary>Picture</summary>
+    <div class="body">
+      <div class="row">
+        <label class="check"><input type="checkbox" id="mirror"> Mirror</label>
+        <label class="check"><input type="checkbox" id="flip"> Flip upside down</label>
+        <label class="check"><input type="checkbox" id="gray"> Black and white</label>
+      </div>
+      <div class="row">
+        <div class="field"><label for="rotate">Rotate</label>
+          <select id="rotate">
+            <option value="0">0&deg;</option><option value="90">90&deg;</option>
+            <option value="180">180&deg;</option><option value="270">270&deg;</option>
+          </select></div>
+        <div class="field"><label for="fit">Fit to output</label>
+          <select id="fit">
+            <option value="pad">Letterbox (whole image)</option>
+            <option value="fill">Fill (crop edges)</option>
+          </select></div>
+      </div>
+      <div class="field"><label for="brightness">Brightness <span class="val" id="brightnessVal"></span></label>
+        <input type="range" id="brightness" min="-50" max="50" step="1"></div>
+      <div class="field"><label for="contrast">Contrast <span class="val" id="contrastVal"></span></label>
+        <input type="range" id="contrast" min="50" max="200" step="5"></div>
+      <div class="field"><label for="saturation">Saturation <span class="val" id="saturationVal"></span></label>
+        <input type="range" id="saturation" min="0" max="200" step="5"></div>
+      <button id="resetPicture" type="button">Reset picture</button>
+      <p class="note">Picture changes are applied on your computer, so the stream pauses for a moment each time you change one.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>Audio</summary>
+    <div class="body">
+      <label class="check"><input type="checkbox" id="mic"> Send phone microphone to the computer</label>
+      <p class="note" id="audioNote">Needs the server to be started with <code>--audio</code>.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>Connection and power</summary>
+    <div class="body">
+      <div class="field"><label for="pin">PIN (only if the server was started with one)</label>
+        <input type="password" id="pin" inputmode="numeric" autocomplete="off"></div>
+      <div class="row">
+        <button id="hidePreview" type="button">Hide preview</button>
+        <button id="dimBtn" type="button">Dim screen</button>
+      </div>
+      <p class="note">The screen stays awake while streaming. Locking the phone or switching apps stops the camera.</p>
+    </div>
+  </details>
+</main>
+<div id="dim" hidden>Streaming. Tap anywhere to wake the screen.</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const VIDEO_HDR = new Uint8Array([1]), AUDIO_HDR = new Uint8Array([2]);
+
+const store = {
+  get(key, fallback) { try { const v = localStorage.getItem("pirate-cam:" + key); return v === null ? fallback : JSON.parse(v); } catch (e) { return fallback; } },
+  set(key, value) { try { localStorage.setItem("pirate-cam:" + key, JSON.stringify(value)); } catch (e) { /* storage may be blocked */ } },
+};
+
+const DEFAULTS = {
+  facing: "user", deviceId: "", res: "1280x720", fps: 30, quality: 70, adaptive: true,
+  mirror: false, flip: false, rotate: 0, fit: "pad", brightness: 0, contrast: 100, saturation: 100,
+  gray: false, mic: false, pin: "",
+};
+const S = Object.assign({}, DEFAULTS, store.get("settings", {}));
+{
+  const url = new URL(location.href);
+  const pin = url.searchParams.get("pin");
+  if (pin) { S.pin = pin; url.searchParams.delete("pin"); history.replaceState(null, "", url.pathname); }
+}
+const save = () => store.set("settings", S);
+
+// ---- runtime state -------------------------------------------------------
+let running = false, ws = null, stream = null, track = null, wakeLock = null, backoff = 500;
+let helloSeen = false, failedBeforeHello = 0, serverAudio = false;
+let encoding = 0, lastSent = 0, lastFrameSize = 60000, curQuality = S.quality / 100;
+let sentFrames = 0, sentBytes = 0, droppedLocal = 0, calmSeconds = 0;
+let rtt = null, serverStats = null, statsTimer = null, pingTimer = null, pushTimer = null, camTimer = null;
+let micStream = null, actx = null, micNode = null, pcm = [], pcmLen = 0, testRaf = 0;
+
+const preview = $("preview");
+const canvas = document.createElement("canvas");
+const g = canvas.getContext("2d", { alpha: false });
+
+function setStatus(state, text) {
+  $("pill").dataset.state = state;
+  $("pillText").textContent = text;
+}
+function say(text, bad) { const m = $("msg"); m.textContent = text || ""; m.classList.toggle("bad", !!bad); }
+
+// ---- controls <-> settings -----------------------------------------------
+const sliders = {
+  quality: (v) => v + "%",
+  brightness: (v) => (v > 0 ? "+" : "") + v,
+  contrast: (v) => v + "%",
+  saturation: (v) => v + "%",
+};
+function showValue(id) { if (sliders[id]) $(id + "Val").textContent = sliders[id](S[id]); }
+
+function bind(id, kind, onChange) {
+  const el = $(id);
+  if (kind === "check") el.checked = !!S[id];
+  else el.value = String(S[id]);
+  showValue(id);
+  el.addEventListener(kind === "check" ? "change" : "input", () => {
+    S[id] = kind === "check" ? el.checked : kind === "number" ? Number(el.value) : el.value;
+    showValue(id);
+    save();
+    if (onChange) onChange();
+  });
+}
+
+const restartCameraSoon = () => { clearTimeout(camTimer); camTimer = setTimeout(() => { if (running) startCamera().catch(cameraFailed); }, 250); };
+const pictureChanged = () => { applyPreviewLook(); pushSettingsSoon(); };
+
+bind("res", "text", restartCameraSoon);
+bind("fps", "number", restartCameraSoon);
+bind("quality", "number", () => { curQuality = S.quality / 100; });
+bind("adaptive", "check");
+bind("mirror", "check", pictureChanged);
+bind("flip", "check", pictureChanged);
+bind("gray", "check", pictureChanged);
+bind("rotate", "number", pictureChanged);
+bind("fit", "text", pictureChanged);
+bind("brightness", "number", pictureChanged);
+bind("contrast", "number", pictureChanged);
+bind("saturation", "number", pictureChanged);
+bind("mic", "check", () => { if (running) (S.mic ? startMic() : stopMic()); });
+$("pin").value = S.pin;
+$("pin").addEventListener("input", () => { S.pin = $("pin").value; save(); });
+
+$("resetPicture").addEventListener("click", () => {
+  Object.assign(S, { mirror: false, flip: false, gray: false, rotate: 0, fit: "pad", brightness: 0, contrast: 100, saturation: 100 });
+  for (const id of ["mirror", "flip", "gray"]) $(id).checked = S[id];
+  for (const id of ["rotate", "fit", "brightness", "contrast", "saturation"]) { $(id).value = String(S[id]); showValue(id); }
+  save(); pictureChanged();
+});
+
+function applyPreviewLook() {
+  const t = [];
+  if (S.rotate) t.push("rotate(" + S.rotate + "deg)");
+  if (S.mirror) t.push("scaleX(-1)");
+  if (S.flip) t.push("scaleY(-1)");
+  preview.style.transform = t.join(" ");
+  const f = ["brightness(" + (1 + S.brightness / 100) + ")", "contrast(" + S.contrast / 100 + ")", "saturate(" + (S.gray ? 0 : S.saturation / 100) + ")"];
+  preview.style.filter = f.join(" ");
+}
+
+function pictureSettings() {
+  return {
+    type: "settings", mirror: S.mirror, flip: S.flip, gray: S.gray, rotate: S.rotate, fit: S.fit,
+    brightness: S.brightness / 100, contrast: S.contrast / 100, saturation: S.saturation / 100,
+  };
+}
+function pushSettings() { if (ws && ws.readyState === 1) ws.send(JSON.stringify(pictureSettings())); }
+function pushSettingsSoon() { clearTimeout(pushTimer); pushTimer = setTimeout(pushSettings, 400); }
+
+// ---- camera ----------------------------------------------------------------
+function describe(err) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+    return "This browser can't open the camera on this address. Use the https:// link the server printed.";
+  switch (err && err.name) {
+    case "NotAllowedError": return "Camera access was blocked. Allow it in the browser's site settings, then try again.";
+    case "NotFoundError": return "No camera was found on this device.";
+    case "NotReadableError": return "The camera is busy. Close other apps that use it and try again.";
+    default: return "Could not start the camera: " + (err && err.message ? err.message : err);
+  }
+}
+function cameraFailed(err) {
+  say(describe(err), true);
+  setStatus("error", "Camera error");
+  if (!stream) stop(true);
+}
+
+function stopCamera() {
+  cancelAnimationFrame(testRaf);
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = null; track = null;
+  preview.srcObject = null;
+}
+
+function testPatternStream() {
+  const c = document.createElement("canvas");
+  c.width = 1280; c.height = 720;
+  const x = c.getContext("2d");
+  const colors = ["#fff", "#ff0", "#0ff", "#0f0", "#f0f", "#f00", "#00f", "#000"];
+  const draw = (now) => {
+    colors.forEach((col, i) => { x.fillStyle = col; x.fillRect(i * 160, 0, 160, 720); });
+    x.fillStyle = "#fff"; x.fillRect(0, 560, 1280, 160);
+    x.fillStyle = "#000"; x.fillRect((now / 4) % 1280, 560, 80, 160);
+    x.fillStyle = "#000"; x.font = "bold 64px monospace"; x.fillText("Pirate-Cam test " + Math.round(now / 1000 % 1000), 40, 120);
+    testRaf = requestAnimationFrame(draw);
+  };
+  testRaf = requestAnimationFrame(draw);
+  return c.captureStream(S.fps);
+}
+
+async function startCamera() {
+  stopCamera();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("no mediaDevices");
+  if (S.deviceId === "test") {
+    stream = testPatternStream();
+  } else {
+    const [w, h] = S.res.split("x").map(Number);
+    const video = { width: { ideal: w }, height: { ideal: h }, frameRate: { ideal: S.fps } };
+    if (S.deviceId) video.deviceId = { exact: S.deviceId }; else video.facingMode = S.facing;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+    } catch (err) {
+      if (err && err.name === "OverconstrainedError") {
+        stream = await navigator.mediaDevices.getUserMedia({ video: S.deviceId ? { deviceId: { exact: S.deviceId } } : { facingMode: S.facing }, audio: false });
+      } else throw err;
+    }
+  }
+  track = stream.getVideoTracks()[0];
+  preview.srcObject = stream;
+  await preview.play();
+  applyPreviewLook();
+  await listCameras();
+  setupCapabilities();
+}
+
+async function listCameras() {
+  const sel = $("camera");
+  let cams = [];
+  try { cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput"); } catch (e) { /* ignore */ }
+  sel.textContent = "";
+  const add = (value, label) => { const o = document.createElement("option"); o.value = value; o.textContent = label; sel.appendChild(o); };
+  add("", "Automatic (" + (S.facing === "user" ? "front" : "back") + ")");
+  cams.forEach((d, i) => add(d.deviceId, d.label || "Camera " + (i + 1)));
+  add("test", "Test pattern (no camera)");
+  sel.value = Array.from(sel.options).some((o) => o.value === S.deviceId) ? S.deviceId : "";
+}
+$("camera").addEventListener("change", () => { S.deviceId = $("camera").value; save(); restartCameraSoon(); });
+$("swap").addEventListener("click", () => {
+  S.facing = S.facing === "user" ? "environment" : "user"; S.deviceId = ""; save();
+  if (running) startCamera().catch(cameraFailed); else say("Using the " + (S.facing === "user" ? "front" : "back") + " camera.");
+});
+
+function setupCapabilities() {
+  const caps = track && track.getCapabilities ? track.getCapabilities() : {};
+  const zoom = $("zoom");
+  $("zoomField").hidden = !(caps.zoom && caps.zoom.max > caps.zoom.min);
+  if (!$("zoomField").hidden) {
+    zoom.min = caps.zoom.min; zoom.max = caps.zoom.max; zoom.step = caps.zoom.step || 0.1;
+    zoom.value = (track.getSettings().zoom) || caps.zoom.min;
+    $("zoomVal").textContent = Number(zoom.value).toFixed(1) + "x";
+  }
+  $("torchField").hidden = !caps.torch;
+  $("torch").checked = false;
+  $("capNote").textContent = $("zoomField").hidden && $("torchField").hidden ? "This camera doesn't offer zoom or flashlight control in the browser." : "";
+}
+$("zoom").addEventListener("input", () => {
+  const v = Number($("zoom").value);
+  $("zoomVal").textContent = v.toFixed(1) + "x";
+  if (track) track.applyConstraints({ advanced: [{ zoom: v }] }).catch(() => {});
+});
+$("torch").addEventListener("change", () => {
+  if (track) track.applyConstraints({ advanced: [{ torch: $("torch").checked }] }).catch(() => { $("torch").checked = false; });
+});
+
+// ---- connection ------------------------------------------------------------
+function connect() {
+  if (!running) return;
+  setStatus(helloSeen ? "reconnecting" : "connecting", helloSeen ? "Reconnecting" : "Connecting");
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const sock = new WebSocket(proto + "://" + location.host + "/ws?pin=" + encodeURIComponent(S.pin));
+  ws = sock;
+  sock.binaryType = "arraybuffer";
+  let opened = false;
+  sock.onopen = () => { opened = true; };
+  sock.onmessage = (e) => { if (typeof e.data === "string") onServerMessage(JSON.parse(e.data)); };
+  sock.onclose = () => {
+    if (ws === sock) ws = null;
+    if (!running) return;
+    if (!opened) {
+      failedBeforeHello++;
+      if (failedBeforeHello >= 3) say("Can't reach the computer. Check the PIN, that you're on the same network, and that the firewall allows this port.", true);
+    }
+    setStatus("reconnecting", "Reconnecting");
+    setTimeout(connect, backoff);
+    backoff = Math.min(Math.round(backoff * 1.7), 5000);
+  };
+}
+
+function onServerMessage(m) {
+  if (m.type === "hello") {
+    helloSeen = true; failedBeforeHello = 0; backoff = 500; serverAudio = !!m.audio;
+    setStatus("live", "Live");
+    say("Streaming to " + m.out.w + " x " + m.out.h + " on the computer.");
+    $("mic").disabled = !serverAudio;
+    $("audioNote").textContent = serverAudio ? "Appears on the computer as “Pirate-Cam-Microphone”." : "Needs the server to be started with --audio.";
+    pushSettings();
+    if (S.mic && serverAudio) startMic();
+  } else if (m.type === "pong") {
+    rtt = Math.round(performance.now() - m.t);
+  } else if (m.type === "stats") {
+    serverStats = m;
+  }
+}
+
+// ---- frame loop --------------------------------------------------------------
+function schedule() {
+  if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) preview.requestVideoFrameCallback(onFrame);
+  else setTimeout(onFrame, 1000 / S.fps);
+}
+function onFrame() {
+  if (!running) return;
+  schedule();
+  capture();
+}
+function capture() {
+  if (!ws || ws.readyState !== 1 || !preview.videoWidth) return;
+  const now = performance.now();
+  if (now - lastSent < 1000 / S.fps - 3) return;
+  if (encoding >= 2 || ws.bufferedAmount > Math.max(200000, lastFrameSize * 3)) { droppedLocal++; return; }
+  const long = Math.max(...S.res.split("x").map(Number));
+  const vw = preview.videoWidth, vh = preview.videoHeight, scale = long / Math.max(vw, vh);
+  const cw = (Math.round(vw * scale) >> 1) << 1, ch = (Math.round(vh * scale) >> 1) << 1;
+  if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+  g.drawImage(preview, 0, 0, cw, ch);
+  lastSent = now;
+  encoding++;
+  canvas.toBlob((blob) => {
+    encoding--;
+    if (!blob || !ws || ws.readyState !== 1) return;
+    lastFrameSize = blob.size;
+    ws.send(new Blob([VIDEO_HDR, blob]));
+    sentFrames++; sentBytes += blob.size;
+  }, "image/jpeg", curQuality);
+}
+
+function everySecond() {
+  const settings = track ? track.getSettings() : {};
+  if (S.adaptive) {
+    if (droppedLocal > 2 && curQuality > 0.4) { curQuality = Math.max(0.4, curQuality - 0.05); calmSeconds = 0; }
+    else if (droppedLocal === 0) { if (++calmSeconds >= 3 && curQuality < S.quality / 100) curQuality = Math.min(S.quality / 100, curQuality + 0.03); }
+    else calmSeconds = 0;
+  } else curQuality = S.quality / 100;
+  const parts = [
+    sentFrames + " fps sent",
+    Math.round(sentBytes * 8 / 1000) + " kbit/s",
+    "q" + Math.round(curQuality * 100),
+  ];
+  if (settings.width) parts.push("cam " + settings.width + "x" + settings.height + (settings.frameRate ? "@" + Math.round(settings.frameRate) : ""));
+  if (rtt !== null) parts.push("rtt " + rtt + " ms");
+  if (serverStats) parts.push("pc " + serverStats.out_fps + " fps");
+  if (droppedLocal) parts.push(droppedLocal + " dropped");
+  $("hud").replaceChildren(...parts.map((p) => { const s = document.createElement("span"); s.textContent = p; return s; }));
+  sentFrames = 0; sentBytes = 0; droppedLocal = 0;
+}
+
+// ---- microphone ----------------------------------------------------------------
+const WORKLET = "class T extends AudioWorkletProcessor{process(i){const c=i[0][0];if(c)this.port.postMessage(c.slice(0));return true}}registerProcessor('pcm-tap',T)";
+async function startMic() {
+  if (micStream || !serverAudio) return;
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    await actx.resume();
+    await actx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" })));
+    const src = actx.createMediaStreamSource(micStream);
+    micNode = new AudioWorkletNode(actx, "pcm-tap");
+    const mute = actx.createGain(); mute.gain.value = 0;
+    src.connect(micNode); micNode.connect(mute); mute.connect(actx.destination);
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "audio", rate: actx.sampleRate }));
+    micNode.port.onmessage = (e) => {
+      pcm.push(e.data); pcmLen += e.data.length;
+      if (pcmLen >= actx.sampleRate / 50) flushAudio();
+    };
+  } catch (err) {
+    S.mic = false; $("mic").checked = false; save();
+    stopMic();
+    say("Microphone unavailable: " + (err && err.message ? err.message : err), true);
+  }
+}
+function flushAudio() {
+  const out = new Int16Array(pcmLen);
+  let o = 0;
+  for (const chunk of pcm) for (let i = 0; i < chunk.length; i++) { const s = Math.max(-1, Math.min(1, chunk[i])); out[o++] = s < 0 ? s * 32768 : s * 32767; }
+  pcm = []; pcmLen = 0;
+  if (ws && ws.readyState === 1 && ws.bufferedAmount < 500000) ws.send(new Blob([AUDIO_HDR, out.buffer]));
+}
+function stopMic() {
+  if (micStream) micStream.getTracks().forEach((t) => t.stop());
+  if (actx) actx.close().catch(() => {});
+  micStream = null; actx = null; micNode = null; pcm = []; pcmLen = 0;
+}
+
+// ---- power -------------------------------------------------------------------------
+async function keepAwake() {
+  try { if ("wakeLock" in navigator && running) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { /* not supported or denied */ }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && running) { keepAwake(); if (!stream) startCamera().catch(cameraFailed); } });
+
+$("hidePreview").addEventListener("click", () => {
+  const hidden = $("stage").classList.toggle("hidden");
+  $("hidePreview").textContent = hidden ? "Show preview" : "Hide preview";
+});
+$("dimBtn").addEventListener("click", () => { $("dim").hidden = false; });
+$("dim").addEventListener("click", () => { $("dim").hidden = true; });
+
+// ---- start / stop ----------------------------------------------------------------------
+async function start() {
+  if (running) return;
+  running = true; helloSeen = false; failedBeforeHello = 0; backoff = 500;
+  $("go").dataset.live = "true"; $("go").textContent = "Stop streaming";
+  say("");
+  setStatus("connecting", "Starting camera");
+  try { await startCamera(); } catch (err) { cameraFailed(err); return; }
+  connect();
+  schedule();
+  keepAwake();
+  statsTimer = setInterval(everySecond, 1000);
+  pingTimer = setInterval(() => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "ping", t: performance.now() })); }, 2000);
+}
+function stop(keepMessage) {
+  running = false;
+  clearInterval(statsTimer); clearInterval(pingTimer);
+  if (ws) { try { ws.close(); } catch (e) { /* already closed */ } ws = null; }
+  stopCamera(); stopMic();
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  $("go").dataset.live = "false"; $("go").textContent = "Start streaming";
+  $("hud").textContent = "";
+  if (!keepMessage) { setStatus("idle", "Idle"); say(""); }
+}
+$("go").addEventListener("click", () => (running ? stop() : start()));
+window.addEventListener("pagehide", () => stop());
+applyPreviewLook();
+listCameras();
+</script>
+</body>
+</html>

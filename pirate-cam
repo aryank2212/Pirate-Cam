@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Launcher: runs pirate_cam.py from wherever this script lives (symlinks are followed).
+exec python3 "$(dirname "$(readlink -f "$0")")/pirate_cam.py" "$@"
